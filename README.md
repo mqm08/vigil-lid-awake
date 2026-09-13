@@ -44,27 +44,56 @@ macOS 合上盖子就会休眠,跑到一半的任务直接暂停。系统自带�
 | 🔌 **仅充电时生效** | 拔掉电源立即恢复休眠 |
 | ⚡ **插电自动开启** | 插上电就守夜,拔掉就恢复 |
 | 🚪 **无人登录时恢复** | 注销后自动恢复正常休眠,不会一直醒着 |
+| 🧯 **冲突检测** | 发现其他程序在修改休眠设置时提醒你 |
 | 🇨🇳 **中文原生界面** | SwiftUI 编写,自动适配浅色 / 深色模式 |
 
 ## 安装
 
-需要 macOS 14+ 与 Xcode Command Line Tools(`xcode-select --install`),不需要完整 Xcode。
+**不需要终端,不需要开发工具。**
+
+1. 下载最新版 [**Vigil.dmg**](https://github.com/mqm08/vigil-lid-awake/releases/latest/download/Vigil.dmg)
+2. 双击打开,把 **守夜** 拖进「应用程序」
+3. 打开守夜,菜单栏会出现 🌙,点开面板,点 **「一键安装」**
+4. 系统会弹出密码框,输入开机密码即可
+
+之后所有操作都在面板里完成,不再需要密码。守夜中,菜单栏图标会变成**琥珀色的星月**。
+
+<details>
+<summary><b>打开时提示「无法验证开发者」怎么办?</b></summary>
+
+守夜是免费开源项目,没有购买苹果开发者证书,所以首次打开会被系统拦截。二选一:
+
+- 打开 **系统设置 → 隐私与安全性**,滚到底部,找到守夜,点 **「仍要打开」**
+- 或在终端运行:
+  ```bash
+  xattr -dr com.apple.quarantine /Applications/Vigil.app
+  ```
+
+源码全部公开,可以自行审阅或从源码构建。
+</details>
+
+<details>
+<summary><b>从源码安装(开发者)</b></summary>
+
+需要 Xcode Command Line Tools(`xcode-select --install`)。
 
 ```bash
 git clone https://github.com/mqm08/vigil-lid-awake.git
 cd vigil-lid-awake
 sudo ./install.sh
 ```
-
-**这是唯一需要输入密码的一步。** 装好后菜单栏会出现 🌙 图标,之后所有操作都在面板里完成,不再需要密码。
+</details>
 
 ## 卸载
 
-```bash
-sudo ./uninstall.sh
-```
+面板右下角 **⋯ → 卸载守夜**,会移除后台服务、设置和应用本身,休眠行为恢复为系统默认。
 
-会移除应用、后台服务和配置文件,并把休眠行为恢复为系统默认。
+从源码安装的也可以用 `sudo ./uninstall.sh`。
+
+## 常见问题
+
+**守夜时断时续,面板提示「有其他程序在修改休眠设置」?**
+Amphetamine、Lidless、KeepingYouAwake 等同类工具也会修改休眠设置,同时运行会互相覆盖。关掉其他工具即可。
 
 ## 工作原理
 
@@ -105,6 +134,7 @@ tail -f /var/log/vigil.log
 
 ```bash
 ./build.sh          # 产物: build/Vigil.app
+./build.sh --dmg    # 同时打包 build/Vigil.dmg
 ```
 
 项目结构:

@@ -44,10 +44,22 @@ struct DaemonState: Decodable {
     var hot = false
     var reason = ""
     var checkedAt: Double = 0
+    var overrideAt: Double = 0
 
     enum CodingKeys: String, CodingKey {
         case hot, reason
         case checkedAt = "checked_at"
+        case overrideAt = "override_at"
+    }
+
+    init() {}
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        hot = try c.decodeIfPresent(Bool.self, forKey: .hot) ?? false
+        reason = try c.decodeIfPresent(String.self, forKey: .reason) ?? ""
+        checkedAt = try c.decodeIfPresent(Double.self, forKey: .checkedAt) ?? 0
+        overrideAt = try c.decodeIfPresent(Double.self, forKey: .overrideAt) ?? 0
     }
 }
 
@@ -66,8 +78,11 @@ final class Store: ObservableObject {
     @Published private(set) var thermal: ProcessInfo.ThermalState = .nominal
     @Published private(set) var daemon = DaemonState()
     @Published private(set) var daemonInstalled = false
+    @Published private(set) var daemonOutdated = false
     @Published private(set) var now = Date()
     @Published var launchAtLogin = SMAppService.mainApp.status == .enabled
+    @Published private(set) var isInstalling = false
+    @Published var installError: String?
 
     private var timer: Timer?
 
@@ -98,6 +113,11 @@ final class Store: ObservableObject {
         }
         if daemon.hot { return .paused("正在降温") }
         return .waiting
+    }
+
+    /// Something other than Vigil switched sleep back on recently.
+    var hasConflict: Bool {
+        daemonInstalled && now.timeIntervalSince1970 - daemon.overrideAt < 300
     }
 
     var daemonHealthy: Bool {
@@ -140,6 +160,35 @@ final class Store: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
+    func installDaemon() {
+        isInstalling = true
+        installError = nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try Installer.install() }
+            DispatchQueue.main.async {
+                self.isInstalling = false
+                if case .failure(let e) = result, !(e is Installer.Failure && e.localizedDescription == "已取消") {
+                    self.installError = e.localizedDescription
+                }
+                self.refresh()
+            }
+        }
+    }
+
+    func uninstallEverything() {
+        do {
+            try Installer.uninstall()
+        } catch {
+            if error.localizedDescription != "已取消" { installError = error.localizedDescription }
+            return
+        }
+        try? FileManager.default.removeItem(at: Self.configURL.deletingLastPathComponent())
+        try? SMAppService.mainApp.unregister()
+        NSWorkspace.shared.recycle([Bundle.main.bundleURL]) { _, _ in
+            NSApplication.shared.terminate(nil)
+        }
+    }
+
     func quit() {
         var c = config
         c.enabled = false
@@ -157,10 +206,21 @@ final class Store: ObservableObject {
         thermal = SystemProbe.thermalState
         isActive = SystemProbe.sleepDisabled()
         daemonInstalled = FileManager.default.fileExists(atPath: Self.daemonPlist)
+        daemonOutdated = daemonInstalled && Self.installedDaemonDiffers()
         if let data = try? Data(contentsOf: Self.stateURL),
            let s = try? JSONDecoder().decode(DaemonState.self, from: data) {
             daemon = s
         }
+    }
+
+    private static func installedDaemonDiffers() -> Bool {
+        guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("daemon") else { return false }
+        for file in ["vigild.py", "thermal.py"] {
+            let a = try? Data(contentsOf: bundled.appendingPathComponent(file))
+            let b = try? Data(contentsOf: URL(fileURLWithPath: "/usr/local/libexec/vigil/\(file)"))
+            if a != nil, a != b { return true }
+        }
+        return false
     }
 
     private func refreshSoon() {

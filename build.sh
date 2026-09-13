@@ -3,12 +3,13 @@
 # Build Vigil.app from source. No Xcode needed — just Command Line Tools.
 #
 #   ./build.sh            -> build/Vigil.app
+#   ./build.sh --dmg      -> build/Vigil.app + build/Vigil.dmg
 #
 set -euo pipefail
 cd "$(dirname "$0")"
 
 APP="build/Vigil.app"
-VERSION="1.0.0"
+VERSION="${VERSION:-1.1.0}"
 
 echo "› Compiling…"
 mkdir -p build
@@ -32,7 +33,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/daemon"
 cp build/Vigil "$APP/Contents/MacOS/Vigil"
 cp build/Vigil.icns "$APP/Contents/Resources/Vigil.icns"
-cp daemon/vigild.py daemon/thermal.py "$APP/Contents/Resources/daemon/"
+cp daemon/vigild.py daemon/thermal.py daemon/com.vigil.daemon.plist "$APP/Contents/Resources/daemon/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -56,3 +57,14 @@ PLIST
 
 codesign --force --deep --sign - "$APP" >/dev/null 2>&1
 echo "✅ Built $APP"
+
+if [ "${1:-}" = "--dmg" ]; then
+    echo "› Packaging DMG…"
+    STAGE="build/dmg"
+    rm -rf "$STAGE" build/Vigil.dmg && mkdir -p "$STAGE"
+    cp -R "$APP" "$STAGE/"
+    ln -s /Applications "$STAGE/Applications"
+    hdiutil create -volname "守夜 Vigil" -srcfolder "$STAGE" -ov -format UDZO build/Vigil.dmg >/dev/null
+    rm -rf "$STAGE"
+    echo "✅ Built build/Vigil.dmg"
+fi

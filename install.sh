@@ -1,6 +1,7 @@
 #!/bin/bash
 #
-# Install Vigil: the root daemon + the menu bar app.
+# Install Vigil from source: the root daemon + the menu bar app.
+# Most people should download Vigil.dmg from Releases instead.
 #
 #   sudo ./install.sh
 #
@@ -28,25 +29,7 @@ install -d -m 755 -o root -g wheel /usr/local/libexec/vigil
 install -m 755 -o root -g wheel daemon/vigild.py  /usr/local/libexec/vigil/vigild.py
 install -m 644 -o root -g wheel daemon/thermal.py /usr/local/libexec/vigil/thermal.py
 
-cat > /Library/LaunchDaemons/com.vigil.daemon.plist <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>             <string>com.vigil.daemon</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/python3</string>
-        <string>/usr/local/libexec/vigil/vigild.py</string>
-    </array>
-    <key>StartInterval</key>     <integer>30</integer>
-    <key>RunAtLoad</key>         <true/>
-    <key>StandardErrorPath</key> <string>/var/log/vigil.log</string>
-</dict>
-</plist>
-PLIST
-chown root:wheel /Library/LaunchDaemons/com.vigil.daemon.plist
-chmod 644 /Library/LaunchDaemons/com.vigil.daemon.plist
+install -m 644 -o root -g wheel daemon/com.vigil.daemon.plist /Library/LaunchDaemons/com.vigil.daemon.plist
 launchctl bootout system/com.vigil.daemon 2>/dev/null || true
 launchctl bootstrap system /Library/LaunchDaemons/com.vigil.daemon.plist
 

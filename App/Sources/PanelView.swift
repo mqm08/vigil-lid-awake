@@ -7,6 +7,8 @@ struct PanelView: View {
         VStack(spacing: 12) {
             header
             HeroCard()
+            if store.hasConflict { ConflictBanner() }
+            if store.daemonOutdated { UpdateBanner() }
             MetricsRow()
             DurationCard()
             SafetyCard()
@@ -43,13 +45,80 @@ struct PanelView: View {
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
             Spacer()
-            Button("退出") { store.quit() }
-                .buttonStyle(.borderless)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(.secondary)
+            Menu {
+                Button("查看日志") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: "/var/log/vigil.log"))
+                }
+                Button("GitHub 主页") {
+                    NSWorkspace.shared.open(URL(string: "https://github.com/mqm08/vigil-lid-awake")!)
+                }
+                Divider()
+                Button("卸载守夜…", role: .destructive) { confirmUninstall() }
+                Divider()
+                Button("退出") { store.quit() }
+            } label: {
+                Image(systemName: "ellipsis.circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
         }
         .padding(.horizontal, 4)
         .padding(.top, 2)
+    }
+}
+
+extension PanelView {
+    private func confirmUninstall() {
+        let alert = NSAlert()
+        alert.messageText = "卸载守夜?"
+        alert.informativeText = "会移除后台服务、设置和应用本身,休眠行为恢复为系统默认。"
+        alert.addButton(withTitle: "卸载")
+        alert.addButton(withTitle: "取消")
+        alert.buttons.first?.hasDestructiveAction = true
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            store.uninstallEverything()
+        }
+    }
+}
+
+struct UpdateBanner: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "arrow.triangle.2.circlepath.circle.fill")
+                .foregroundStyle(Theme.emberDeep)
+            Text("后台服务有新版本").font(.system(size: 12, weight: .semibold))
+            Spacer(minLength: 0)
+            Button(store.isInstalling ? "更新中…" : "更新") { store.installDaemon() }
+                .buttonStyle(.borderedProminent).tint(Theme.emberDeep).controlSize(.small)
+                .disabled(store.isInstalling)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Theme.ember.opacity(0.12)))
+    }
+}
+
+struct ConflictBanner: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("有其他程序在修改休眠设置")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("请关闭 Amphetamine、Lidless 等同类工具,否则守夜会时断时续。")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.12)))
     }
 }
 
@@ -84,12 +153,26 @@ struct HeroCard: View {
 
             Spacer(minLength: 0)
 
-            Toggle("", isOn: Binding(get: { store.config.enabled },
-                                     set: { store.setEnabled($0) }))
-                .toggleStyle(.switch)
+            if store.daemonInstalled {
+                Toggle("", isOn: Binding(get: { store.config.enabled },
+                                         set: { store.setEnabled($0) }))
+                    .toggleStyle(.switch)
+                    .tint(Theme.emberDeep)
+                    .labelsHidden()
+            } else {
+                Button {
+                    store.installDaemon()
+                } label: {
+                    if store.isInstalling {
+                        ProgressView().controlSize(.small).frame(width: 64)
+                    } else {
+                        Text("一键安装").font(.system(size: 12, weight: .semibold)).frame(width: 64)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
                 .tint(Theme.emberDeep)
-                .labelsHidden()
-                .disabled(!store.daemonInstalled)
+                .disabled(store.isInstalling)
+            }
         }
         .padding(14)
         .background(
@@ -109,8 +192,13 @@ struct HeroCard: View {
     @ViewBuilder private var statusLine: some View {
         switch store.status {
         case .notInstalled:
-            Label("请先运行 sudo ./install.sh", systemImage: "exclamationmark.triangle.fill")
-                .font(.system(size: 11)).foregroundStyle(.orange)
+            if let err = store.installError {
+                Label(err, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(.red).lineLimit(2)
+            } else {
+                Text("首次使用需安装后台服务,约 3 秒")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+            }
         case .off:
             Text("已关闭 · 合盖会正常休眠").font(.system(size: 11)).foregroundStyle(.secondary)
         case .waiting:

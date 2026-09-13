@@ -136,7 +136,7 @@ def decide(cfg, state):
 
 
 def main():
-    state = load_json(STATE_PATH, {"hot": False})
+    state = load_json(STATE_PATH, {"hot": False, "last_set": None, "override_at": 0})
 
     if not console_user():
         if sleep_disabled():
@@ -150,12 +150,21 @@ def main():
 
     if hot != state.get("hot"):
         log("thermal pause {}".format("ON" if hot else "OFF"))
-    save_state({"hot": hot, "reason": reason, "checked_at": int(time.time())})
 
     current = sleep_disabled()
+    override_at = state.get("override_at", 0)
+    last_set = state.get("last_set")
+    if last_set is not None and current != last_set:
+        # Someone else flipped the flag since our last run.
+        override_at = int(time.time())
+        log("external change detected: SleepDisabled {} -> {}".format(int(last_set), int(current)))
+
     if want != current:
         set_sleep_disabled(want)
         log("SleepDisabled {} -> {}  ({})".format(int(current), int(want), reason))
+
+    save_state({"hot": hot, "reason": reason, "checked_at": int(time.time()),
+                "last_set": want, "override_at": override_at})
 
 
 if __name__ == "__main__":
