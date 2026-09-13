@@ -7,13 +7,16 @@ Runs as root every 30 seconds via launchd. It reads the user's intent from
 ~/.config/vigil/config.json (written by the menu bar app, no password
 needed) and enforces it on the system SleepDisabled flag, subject to guards:
 
-  * auto-off timer
-  * only while charging
-  * low-battery cutoff
-  * thermal pause (with hysteresis)
+  * keep mode: always / until a timer ends / while AI agents are busy
+  * only while charging, low-battery cutoff
+  * heat pause on battery or chip temperature, or system throttling,
+    with hysteresis so it doesn't flap
   * nobody logged in -> always restore normal sleep
 
-Only this process ever calls `pmset`.
+It also turns the built-in display off when the lid closes, and notices
+when another program flips SleepDisabled behind its back.
+
+Only this process ever changes SleepDisabled.
 """
 
 import json
@@ -27,16 +30,32 @@ import thermal  # noqa: E402
 
 LOG_PATH = "/var/log/vigil.log"
 STATE_PATH = "/var/run/vigil.state.json"
-HYSTERESIS = 5.0  # 过热暂停后,需降到 (上限 - 5°C) 才恢复
+HEAT_HYSTERESIS = 3.0     # °C cooler than the limit before resuming
+HEAT_STRIKES = 2          # consecutive hot checks (~1 min) before pausing
+BUSY_CPU = 3.0            # % CPU across an agent's process tree that counts as working
 
 DEFAULTS = {
     "enabled": False,
+    "keep_mode": "always",            # always | timer | tasks
+    "expires_at": None,
+    "watch_processes": ["claude", "codex"],
+    "idle_grace_minutes": 3,
     "threshold": 20,
     "only_while_charging": False,
-    "expires_at": None,
-    "pause_when_hot": True,
-    "temp_limit": 55,
     "auto_enable_on_charge": False,
+    "pause_when_hot": True,
+    "battery_temp_limit": 45,
+    "chip_temp_limit": 100,
+    "display_off_on_lid_close": True,
+}
+
+STATE_DEFAULTS = {
+    "hot": False,
+    "heat_strikes": 0,
+    "last_set": None,
+    "overrides": [],
+    "last_busy_at": 0,
+    "lid_closed": False,
 }
 
 
@@ -49,7 +68,10 @@ def log(msg):
 
 
 def run(*cmd):
-    return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
 
 def console_user():
@@ -97,74 +119,136 @@ def set_sleep_disabled(on):
     run("pmset", "-a", "disablesleep", "1" if on else "0")
 
 
-def decide(cfg, state):
-    """Return (want_awake, reason, hot_latched)."""
-    hot_latched = state.get("hot", False)
+def lid_closed():
+    return '"AppleClamshellState" = Yes' in run("ioreg", "-r", "-k", "AppleClamshellState", "-d", "1")
 
+
+def agents_busy(names):
+    """
+    True if any watched agent (e.g. `claude`, `codex`) or anything it spawned
+    is using CPU. A process merely existing isn't enough: desktop apps keep
+    an idle CLI around.
+    """
+    rows = []
+    for line in run("ps", "-Ao", "pid=,ppid=,pcpu=,comm=").splitlines():
+        parts = line.split(None, 3)
+        if len(parts) == 4:
+            try:
+                rows.append((int(parts[0]), int(parts[1]), float(parts[2]),
+                             os.path.basename(parts[3])))
+            except ValueError:
+                continue
+
+    children = {}
+    for pid, ppid, _, _ in rows:
+        children.setdefault(ppid, []).append(pid)
+    cpu = {pid: c for pid, _, c, _ in rows}
+
+    roots = [pid for pid, _, _, comm in rows if comm in names]
+    total, seen, stack = 0.0, set(), list(roots)
+    while stack:
+        pid = stack.pop()
+        if pid in seen:
+            continue
+        seen.add(pid)
+        total += cpu.get(pid, 0.0)
+        stack.extend(children.get(pid, []))
+    return bool(roots) and total >= BUSY_CPU
+
+
+def decide(cfg, state, now):
+    """Return (want_awake, reason). Updates `state` in place."""
     pct, charging = battery()
 
     enabled = cfg["enabled"] or (cfg["auto_enable_on_charge"] and charging)
     if not enabled:
-        return False, "off", False
+        state["hot"] = False
+        return False, "off"
 
-    expires = cfg.get("expires_at")
-    if expires and time.time() > expires:
-        return False, "timer expired", hot_latched
+    mode = cfg["keep_mode"]
+    if mode == "timer":
+        expires = cfg.get("expires_at")
+        if expires and now > expires:
+            return False, "timer expired"
+    elif mode == "tasks":
+        if agents_busy(set(cfg["watch_processes"])):
+            state["last_busy_at"] = now
+        idle_for = now - state.get("last_busy_at", 0)
+        if idle_for > cfg["idle_grace_minutes"] * 60:
+            return False, "agents idle"
 
     if cfg["only_while_charging"] and not charging:
-        return False, "not charging", hot_latched
+        return False, "not charging"
 
     if not charging and pct is not None and pct < cfg["threshold"]:
-        return False, "battery {}% < {}%".format(pct, cfg["threshold"]), hot_latched
+        return False, "battery {}% < {}%".format(pct, cfg["threshold"])
 
     if cfg["pause_when_hot"]:
-        limit = float(cfg["temp_limit"])
-        if hot_latched:
-            temp = thermal.component_temp()
-            level = thermal.thermal_state()
-            cooled = (temp is None or temp < limit - HYSTERESIS) and \
-                     (level is None or level < thermal.SERIOUS)
-            if not cooled:
-                return False, "cooling down", True
-            hot_latched = False
+        hot = state.get("hot", False)
+        margin = HEAT_HYSTERESIS if hot else 0.0
+        why = thermal.check(float(cfg["battery_temp_limit"]), float(cfg["chip_temp_limit"]), margin)
+        if hot:
+            if why:
+                return False, "hot: " + why
+            state.update(hot=False, heat_strikes=0)
+            log("heat pause OFF")
+        elif why:
+            # Brief spikes are normal (a compile on a fanless Air hits 95°C+).
+            state["heat_strikes"] = state.get("heat_strikes", 0) + 1
+            if state["heat_strikes"] >= HEAT_STRIKES:
+                state["hot"] = True
+                log("heat pause ON: " + why)
+                return False, "hot: " + why
         else:
-            too_hot, why = thermal.is_too_hot(limit)
-            if too_hot:
-                return False, "hot: " + why, True
+            state["heat_strikes"] = 0
+    else:
+        state.update(hot=False, heat_strikes=0)
 
-    return True, "ok", hot_latched
+    return True, "ok"
+
+
+def handle_lid(cfg, state, awake):
+    closed = lid_closed()
+    if closed and not state.get("lid_closed") and awake and cfg["display_off_on_lid_close"]:
+        # With SleepDisabled the panel can stay lit behind a closed lid,
+        # wasting power and trapping heat.
+        run("pmset", "displaysleepnow")
+        log("lid closed -> display off")
+    state["lid_closed"] = closed
 
 
 def main():
-    state = load_json(STATE_PATH, {"hot": False, "last_set": None, "override_at": 0})
+    now = time.time()
+    state = load_json(STATE_PATH, STATE_DEFAULTS)
+    state.pop("override_at", None)
+    user = console_user()
 
-    if not console_user():
+    if not user:
         if sleep_disabled():
             set_sleep_disabled(False)
             log("no console user -> sleep restored")
+        state.update(last_set=False, reason="no user", checked_at=int(now))
+        save_state(state)
         return
 
-    user = console_user()
     cfg = load_json("/Users/{}/.config/vigil/config.json".format(user), DEFAULTS)
-    want, reason, hot = decide(cfg, state)
-
-    if hot != state.get("hot"):
-        log("thermal pause {}".format("ON" if hot else "OFF"))
+    want, reason = decide(cfg, state, now)
 
     current = sleep_disabled()
-    override_at = state.get("override_at", 0)
     last_set = state.get("last_set")
     if last_set is not None and current != last_set:
-        # Someone else flipped the flag since our last run.
-        override_at = int(time.time())
-        log("external change detected: SleepDisabled {} -> {}".format(int(last_set), int(current)))
+        state["overrides"] = (state.get("overrides", []) + [int(now)])[-10:]
+        pct, charging = battery()
+        log("external change detected: SleepDisabled {} -> {}  (lid={} ac={} battery={}%)".format(
+            int(last_set), int(current), lid_closed(), charging, pct))
 
     if want != current:
         set_sleep_disabled(want)
         log("SleepDisabled {} -> {}  ({})".format(int(current), int(want), reason))
 
-    save_state({"hot": hot, "reason": reason, "checked_at": int(time.time()),
-                "last_set": want, "override_at": override_at})
+    handle_lid(cfg, state, want)
+    state.update(last_set=want, reason=reason, checked_at=int(now))
+    save_state(state)
 
 
 if __name__ == "__main__":

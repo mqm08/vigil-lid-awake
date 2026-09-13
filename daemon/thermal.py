@@ -1,99 +1,69 @@
 #!/usr/bin/python3
 # -*- coding: utf-8 -*-
 """
-Thermal readings for Vigil, using only what ships with macOS.
+Thermal readings for Vigil.
 
-Three independent signals, no third-party dependencies:
-
-  battery_temp()   real battery temperature in °C, via IORegistry
-  component_temp() internal component temperature in °C, via IORegistry
-  thermal_state()  Apple's own NSProcessInfo thermal pressure level (0-3)
+Real die and battery temperatures come from the bundled `vigil-sensors`
+helper (IOHIDEventSystem, same source as Stats / iStat Menus). Apple's own
+thermal pressure level comes from NSProcessInfo via JXA. If the helper is
+missing we fall back to the smart battery controller in IORegistry.
 """
 
+import json
+import os
 import re
 import subprocess
 
-# NSProcessInfoThermalState
 NOMINAL, FAIR, SERIOUS, CRITICAL = 0, 1, 2, 3
-
-STATE_LABELS = {
-    NOMINAL: "正常",
-    FAIR: "温热",
-    SERIOUS: "偏热",
-    CRITICAL: "过热",
-}
+HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "vigil-sensors")
 
 
-def _ioreg_value(key):
+def _run(cmd):
     try:
-        out = subprocess.run(
-            ["ioreg", "-r", "-n", "AppleSmartBattery"],
-            capture_output=True, text=True, timeout=5,
-        ).stdout
-        m = re.search(r'"{}"\s*=\s*(-?\d+)'.format(key), out)
-        return int(m.group(1)) if m else None
-    except Exception:
-        return None
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
 
 
-def battery_temp():
-    """电池温度 (°C),读不到返回 None"""
-    raw = _ioreg_value("Temperature")
-    return raw / 100.0 if raw is not None else None
-
-
-def component_temp():
-    """机身内部元件温度 (°C),读不到返回 None"""
-    raw = _ioreg_value("VirtualTemperature")
-    return raw / 100.0 if raw is not None else None
+def readings():
+    """{"chip": °C|None, "battery": °C|None, "ssd": °C|None}"""
+    if os.access(HELPER, os.X_OK):
+        try:
+            data = json.loads(_run([HELPER]) or "{}")
+            return {k: data.get(k) for k in ("chip", "battery", "ssd")}
+        except ValueError:
+            pass
+    m = re.search(r'"Temperature"\s*=\s*(\d+)', _run(["ioreg", "-r", "-n", "AppleSmartBattery"]))
+    return {"chip": None, "battery": int(m.group(1)) / 100.0 if m else None, "ssd": None}
 
 
 def thermal_state():
-    """Apple 官方热压力等级 0-3,读不到返回 None"""
-    try:
-        out = subprocess.run(
-            ["osascript", "-l", "JavaScript", "-e",
-             'ObjC.import("Foundation"); $.NSProcessInfo.processInfo.thermalState'],
-            capture_output=True, text=True, timeout=5,
-        ).stdout.strip()
-        return int(out) if out.isdigit() else None
-    except Exception:
-        return None
+    out = _run(["osascript", "-l", "JavaScript", "-e",
+                'ObjC.import("Foundation"); $.NSProcessInfo.processInfo.thermalState']).strip()
+    return int(out) if out.isdigit() else None
 
 
-def is_too_hot(temp_limit=55.0):
+def check(battery_limit, chip_limit, margin=0.0):
     """
-    判断是否过热。返回 (是否过热, 原因描述)。
+    Return a reason string if any guard is tripped, else "".
 
-    两个独立条件,任一触发即算过热:
-      1. 元件温度超过设定上限
-      2. 系统热压力达到 serious 及以上
+    `margin` lowers every limit; pass the hysteresis while cooling down so
+    the Mac has to get properly cooler before we resume.
     """
-    state = thermal_state()
-    if state is not None and state >= SERIOUS:
-        return True, "系统热压力 {}".format(STATE_LABELS.get(state, state))
-
-    temp = component_temp()
-    if temp is not None and temp > temp_limit:
-        return True, "机身 {:.0f}°C 超过 {:.0f}°C".format(temp, temp_limit)
-
-    return False, ""
-
-
-def summary():
-    """给界面显示用的温度摘要"""
-    temp = component_temp()
-    state = thermal_state()
-    parts = []
-    if temp is not None:
-        parts.append("{:.0f}°C".format(temp))
-    if state is not None:
-        parts.append(STATE_LABELS.get(state, str(state)))
-    return "  ·  ".join(parts) if parts else "温度未知"
+    r = readings()
+    level = thermal_state()
+    if level is not None and level >= SERIOUS and margin == 0:
+        return "系统开始降频"
+    if level is not None and level >= SERIOUS:
+        return "系统仍在降频"
+    if r["battery"] is not None and r["battery"] > battery_limit - margin:
+        return "电池 {:.0f}°C".format(r["battery"])
+    if r["chip"] is not None and r["chip"] > chip_limit - margin:
+        return "芯片 {:.0f}°C".format(r["chip"])
+    return ""
 
 
 if __name__ == "__main__":
-    print("电池温度 :", battery_temp(), "°C")
-    print("元件温度 :", component_temp(), "°C")
-    print("热压力   :", thermal_state(), STATE_LABELS.get(thermal_state(), ""))
-    print("过热判定 :", is_too_hot())
+    print("readings     :", readings())
+    print("thermal state:", thermal_state())
+    print("check(45,95) :", repr(check(45, 95)))

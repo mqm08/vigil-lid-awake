@@ -27,6 +27,7 @@ enum Installer {
         install -d -m 755 -o root -g wheel /usr/local/libexec/vigil
         install -m 755 -o root -g wheel '\(r)/vigild.py'  /usr/local/libexec/vigil/vigild.py
         install -m 644 -o root -g wheel '\(r)/thermal.py' /usr/local/libexec/vigil/thermal.py
+        install -m 755 -o root -g wheel '\(r)/vigil-sensors' /usr/local/libexec/vigil/vigil-sensors
         install -m 644 -o root -g wheel '\(r)/com.vigil.daemon.plist' /Library/LaunchDaemons/com.vigil.daemon.plist
         launchctl bootout system/com.vigil.daemon 2>/dev/null || true
         launchctl bootstrap system /Library/LaunchDaemons/com.vigil.daemon.plist

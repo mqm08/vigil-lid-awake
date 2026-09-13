@@ -28,6 +28,7 @@ echo "› 安装后台服务"
 install -d -m 755 -o root -g wheel /usr/local/libexec/vigil
 install -m 755 -o root -g wheel daemon/vigild.py  /usr/local/libexec/vigil/vigild.py
 install -m 644 -o root -g wheel daemon/thermal.py /usr/local/libexec/vigil/thermal.py
+install -m 755 -o root -g wheel build/vigil-sensors /usr/local/libexec/vigil/vigil-sensors
 
 install -m 644 -o root -g wheel daemon/com.vigil.daemon.plist /Library/LaunchDaemons/com.vigil.daemon.plist
 launchctl bootout system/com.vigil.daemon 2>/dev/null || true

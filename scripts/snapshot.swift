@@ -10,7 +10,10 @@ struct Snapshot {
         if let icon = NSImage(contentsOfFile: "build/icon-1024.png") { app.applicationIconImage = icon }
 
         let store = Store()
-        for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        let expanded = CommandLine.arguments.contains("--expanded")
+        UserDefaults.standard.set(expanded, forKey: "showSettings")
+        for (base, appearance) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+            let name = expanded ? base + "-settings" : base
             let root = PanelView()
                 .environmentObject(store)
                 .background(Color(nsColor: .windowBackgroundColor))

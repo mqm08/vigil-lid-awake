@@ -29,20 +29,20 @@ enum SystemProbe {
         return Battery(percent: nil, isCharging: false)
     }
 
-    /// Internal component temperature in °C, from the smart battery controller.
-    static func temperature() -> Double? {
-        let service = IOServiceGetMatchingService(kIOMainPortDefault,
-                                                  IOServiceMatching("AppleSmartBattery"))
-        guard service != 0 else { return nil }
-        defer { IOObjectRelease(service) }
-        for key in ["VirtualTemperature", "Temperature"] {
-            if let raw = IORegistryEntryCreateCFProperty(service, key as CFString,
-                                                         kCFAllocatorDefault, 0)?
-                .takeRetainedValue() as? Int {
-                return Double(raw) / 100.0
-            }
-        }
-        return nil
+    static func lidClosed() -> Bool {
+        let pm = IOServiceGetMatchingService(kIOMainPortDefault, IOServiceMatching("IOPMrootDomain"))
+        guard pm != 0 else { return false }
+        defer { IOObjectRelease(pm) }
+        let value = IORegistryEntryCreateCFProperty(pm, "AppleClamshellState" as CFString,
+                                                    kCFAllocatorDefault, 0)?.takeRetainedValue()
+        return (value as? Bool) ?? false
+    }
+
+    static func displaySleepNow() {
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/pmset")
+        task.arguments = ["displaysleepnow"]
+        try? task.run()
     }
 
     static var thermalState: ProcessInfo.ThermalState {

@@ -3,20 +3,63 @@ import SwiftUI
 struct PanelView: View {
     @EnvironmentObject var store: Store
 
+    @AppStorage("showSettings") private var showSettings = false
+
     var body: some View {
         VStack(spacing: 12) {
             header
-            HeroCard()
-            if store.hasConflict { ConflictBanner() }
-            if store.daemonOutdated { UpdateBanner() }
-            MetricsRow()
-            DurationCard()
-            SafetyCard()
-            AutomationCard()
+            content
             footer
         }
         .padding(14)
         .frame(width: 344)
+    }
+
+    private var content: some View {
+        VStack(spacing: 12) {
+            HeroCard()
+            if store.hasConflict { ConflictBanner() }
+            if store.daemonOutdated { UpdateBanner() }
+            MetricsRow()
+            KeepModeCard()
+            settingsToggle
+            if showSettings {
+                FitScrollView(maxHeight: maxSettingsHeight) {
+                    VStack(spacing: 12) {
+                        SafetyCard()
+                        AutomationCard()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Everything above the settings is ~430pt; keep the whole panel on screen.
+    private var maxSettingsHeight: CGFloat {
+        let screen = NSScreen.main?.visibleFrame.height ?? 800
+        return max(200, screen - 560)
+    }
+
+    private var settingsToggle: some View {
+        Button {
+            withAnimation(.smooth(duration: 0.25)) { showSettings.toggle() }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "slider.horizontal.3")
+                Text(showSettings ? "收起设置" : "安全保护与更多设置")
+                Spacer()
+                Image(systemName: "chevron.down")
+                    .rotationEffect(.degrees(showSettings ? 180 : 0))
+            }
+            .font(.system(size: 12, weight: .medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .background(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous)
+                .fill(Color.primary.opacity(0.045)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
@@ -85,6 +128,30 @@ extension PanelView {
     }
 }
 
+/// A ScrollView that is only as tall as its content, up to `maxHeight`.
+struct FitScrollView<Content: View>: View {
+    let maxHeight: CGFloat
+    @ViewBuilder var content: () -> Content
+    @State private var contentHeight: CGFloat = 0
+
+    var body: some View {
+        ScrollView {
+            content()
+                .background(GeometryReader { proxy in
+                    Color.clear.preference(key: HeightKey.self, value: proxy.size.height)
+                })
+        }
+        .scrollIndicators(.automatic)
+        .frame(height: min(max(contentHeight, 1), maxHeight))
+        .onPreferenceChange(HeightKey.self) { contentHeight = $0 }
+    }
+}
+
+private struct HeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
 struct UpdateBanner: View {
     @EnvironmentObject var store: Store
     var body: some View {
@@ -103,14 +170,16 @@ struct UpdateBanner: View {
 }
 
 struct ConflictBanner: View {
+    @EnvironmentObject var store: Store
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.orange)
             VStack(alignment: .leading, spacing: 2) {
-                Text("有其他程序在修改休眠设置")
+                Text(title)
                     .font(.system(size: 12, weight: .semibold))
-                Text("请关闭 Amphetamine、Lidless 等同类工具,否则守夜会时断时续。")
+                Text(detail)
                     .font(.system(size: 10.5))
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -119,6 +188,18 @@ struct ConflictBanner: View {
         }
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.12)))
+    }
+
+    private var title: String {
+        let apps = store.conflictingApps
+        return apps.isEmpty ? "休眠设置被其他程序反复改回" : "\(apps.joined(separator: "、")) 在改回休眠设置"
+    }
+
+    private var detail: String {
+        if store.conflictingApps.contains("UU远程") {
+            return "合盖时可能因此突然休眠。请在 UU远程 设置里关闭「防止休眠」,或使用守夜时退出 UU远程。"
+        }
+        return "合盖时可能因此突然休眠。请关闭同类防休眠工具,或关掉它们的休眠管理功能。"
     }
 }
 
@@ -207,15 +288,10 @@ struct HeroCard: View {
             Label("已暂停 · \(why)", systemImage: "pause.circle.fill")
                 .font(.system(size: 11)).foregroundStyle(.orange)
         case .active:
-            if let r = store.remaining {
-                Text("守夜中 · 剩余 \(r)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Theme.emberDeep)
-            } else {
-                Text("守夜中 · 合盖不会休眠")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Theme.emberDeep)
-            }
+            Text("守夜中 · " + store.activeDetail)
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(Theme.emberDeep)
+                .lineLimit(1)
         }
     }
 }
@@ -230,16 +306,20 @@ struct MetricsRow: View {
             Metric(symbol: batterySymbol,
                    tint: batteryTint,
                    value: store.battery.percent.map { "\($0)%" } ?? "—",
-                   caption: store.battery.isCharging ? "充电中" : "电池")
+                   caption: store.battery.isCharging ? "充电中" : "电池供电")
+            Metric(symbol: "cpu",
+                   tint: chipTint,
+                   value: temp(store.sensors.chip),
+                   caption: "芯片 · " + store.thermal.label)
             Metric(symbol: "thermometer.medium",
-                   tint: tempTint,
-                   value: store.temperature.map { String(format: "%.0f°", $0) } ?? "—",
-                   caption: store.thermal.label)
-            Metric(symbol: store.battery.isCharging ? "powerplug.fill" : "powerplug",
-                   tint: store.battery.isCharging ? .green : .gray,
-                   value: store.battery.isCharging ? "已接" : "未接",
-                   caption: "电源")
+                   tint: batteryTempTint,
+                   value: temp(store.sensors.battery),
+                   caption: "电池温度")
         }
+    }
+
+    private func temp(_ t: Double?) -> String {
+        t.map { String(format: "%.0f°", $0) } ?? "—"
     }
 
     private var batterySymbol: String {
@@ -259,14 +339,17 @@ struct MetricsRow: View {
         return p < store.config.threshold ? .red : (p < 40 ? .orange : .green)
     }
 
-    private var tempTint: Color {
-        switch store.thermal {
-        case .serious, .critical: return .red
-        case .fair: return .orange
-        default:
-            guard let t = store.temperature else { return .gray }
-            return t > Double(store.config.tempLimit) ? .red : .teal
-        }
+    private var chipTint: Color {
+        if store.thermal == .serious || store.thermal == .critical { return .red }
+        guard let t = store.sensors.chip else { return .gray }
+        let limit = Double(store.config.chipTempLimit)
+        return t >= limit ? .red : (t >= limit - 15 ? .orange : .teal)
+    }
+
+    private var batteryTempTint: Color {
+        guard let t = store.sensors.battery else { return .gray }
+        let limit = Double(store.config.batteryTempLimit)
+        return t >= limit ? .red : (t >= limit - 5 ? .orange : .teal)
     }
 }
 
@@ -287,31 +370,94 @@ struct Metric: View {
             Text(caption)
                 .font(.system(size: 10.5))
                 .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .card()
     }
 }
 
-// MARK: - Duration
+// MARK: - Keep mode
 
-struct DurationCard: View {
+struct KeepModeCard: View {
     @EnvironmentObject var store: Store
-    private let options: [(String, Int?)] = [("不限", nil), ("30分", 30), ("1时", 60), ("2时", 120), ("4时", 240)]
+    private let timers = [(30, "30分"), (60, "1时"), (120, "2时"), (240, "4时"), (480, "8时")]
+    private let agents = [("claude", "Claude Code"), ("codex", "Codex")]
 
     var body: some View {
         VStack(spacing: 6) {
-            SectionLabel(text: "保持时长")
-            Picker("", selection: Binding(get: { store.config.durationMinutes ?? -1 },
-                                          set: { store.setDuration($0 == -1 ? nil : $0) })) {
-                ForEach(options, id: \.0) { label, minutes in
-                    Text(label).tag(minutes ?? -1)
+            SectionLabel(text: "保持到")
+            VStack(alignment: .leading, spacing: 10) {
+                Picker("", selection: Binding(get: { store.config.keepMode },
+                                              set: { store.setKeepMode($0) })) {
+                    ForEach(KeepMode.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+
+                switch store.config.keepMode {
+                case .always:
+                    Hint("一直保持唤醒,直到你手动关闭")
+                case .timer:
+                    Picker("", selection: Binding(get: { store.config.timerMinutes },
+                                                  set: { store.setTimerMinutes($0) })) {
+                        ForEach(timers, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                case .tasks:
+                    HStack(spacing: 6) {
+                        ForEach(agents, id: \.0) { id, name in
+                            Chip(title: name, selected: store.config.watchProcesses.contains(id)) {
+                                store.toggleWatched(id)
+                            }
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    HStack {
+                        Hint("AI 空闲超过")
+                        Stepper("\(store.config.idleGraceMinutes) 分钟后休眠",
+                                value: $store.config.idleGraceMinutes, in: 1...30)
+                            .font(.system(size: 11, weight: .medium).monospacedDigit())
+                            .controlSize(.small)
+                    }
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .frame(maxWidth: .infinity)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .card()
         }
+    }
+}
+
+struct Chip: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 11))
+                Text(title).font(.system(size: 11.5, weight: .medium))
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background(Capsule().fill(selected ? Theme.ember.opacity(0.18) : Color.primary.opacity(0.06)))
+            .overlay(Capsule().strokeBorder(selected ? Theme.ember.opacity(0.5) : .clear, lineWidth: 1))
+            .foregroundStyle(selected ? Theme.emberDeep : .secondary)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct Hint: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.system(size: 11)).foregroundStyle(.secondary)
     }
 }
 
@@ -325,7 +471,7 @@ struct SafetyCard: View {
             SectionLabel(text: "安全保护")
             VStack(spacing: 0) {
                 Row(symbol: "battery.25percent", tint: .red,
-                    title: "低电量自动关闭",
+                    title: "低电量自动休眠",
                     subtitle: "未接电源且低于 \(store.config.threshold)% 时") {
                     EmptyView()
                 }
@@ -344,18 +490,18 @@ struct SafetyCard: View {
                 Divider().padding(.leading, 36).padding(.vertical, 6)
 
                 Row(symbol: "thermometer.high", tint: .orange,
-                    title: "过热自动暂停",
-                    subtitle: store.config.pauseWhenHot ? "超过 \(store.config.tempLimit)°C 或系统过热时" : "已关闭") {
+                    title: "过热自动休眠",
+                    subtitle: store.config.pauseWhenHot ? "持续超标约 1 分钟才暂停,降温后自动恢复" : "已关闭,不建议") {
                     Toggle("", isOn: $store.config.pauseWhenHot)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }
                 if store.config.pauseWhenHot {
-                    HStack {
-                        Text("温度上限").font(.system(size: 11)).foregroundStyle(.secondary)
-                        Spacer()
-                        Stepper("\(store.config.tempLimit)°C", value: $store.config.tempLimit, in: 40...75)
-                            .font(.system(size: 11, weight: .medium).monospacedDigit())
-                            .controlSize(.small)
+                    VStack(spacing: 4) {
+                        LimitRow(label: "电池温度超过", value: $store.config.batteryTempLimit, range: 38...50)
+                        LimitRow(label: "芯片温度超过", value: $store.config.chipTempLimit, range: 85...105)
+                        Text("系统开始降频时也会暂停")
+                            .font(.system(size: 10.5)).foregroundStyle(.tertiary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     .padding(.leading, 36)
                     .padding(.top, 4)
@@ -375,6 +521,22 @@ struct SafetyCard: View {
     }
 }
 
+struct LimitRow: View {
+    let label: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+
+    var body: some View {
+        HStack {
+            Text(label).font(.system(size: 11)).foregroundStyle(.secondary)
+            Spacer()
+            Stepper("\(value)°C", value: $value, in: range)
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .controlSize(.small)
+        }
+    }
+}
+
 // MARK: - Automation
 
 struct AutomationCard: View {
@@ -382,8 +544,15 @@ struct AutomationCard: View {
 
     var body: some View {
         VStack(spacing: 6) {
-            SectionLabel(text: "自动化")
+            SectionLabel(text: "更多")
             VStack(spacing: 0) {
+                Row(symbol: "laptopcomputer", tint: .indigo,
+                    title: "合盖后熄灭屏幕",
+                    subtitle: "省电,也避免屏幕在盖子里发热") {
+                    Toggle("", isOn: $store.config.displayOffOnLidClose)
+                        .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
+                }
+                Divider().padding(.leading, 36).padding(.vertical, 6)
                 Row(symbol: "bolt.fill", tint: .yellow,
                     title: "接通电源时自动开启",
                     subtitle: "插上电就守夜,拔掉就恢复") {
@@ -391,7 +560,14 @@ struct AutomationCard: View {
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }
                 Divider().padding(.leading, 36).padding(.vertical, 6)
-                Row(symbol: "power", tint: .indigo,
+                Row(symbol: "bell.badge.fill", tint: .red,
+                    title: "暂停和完成时通知我",
+                    subtitle: nil) {
+                    Toggle("", isOn: $store.config.notify)
+                        .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
+                }
+                Divider().padding(.leading, 36).padding(.vertical, 6)
+                Row(symbol: "power", tint: .gray,
                     title: "登录时打开",
                     subtitle: nil) {
                     Toggle("", isOn: Binding(get: { store.launchAtLogin },
