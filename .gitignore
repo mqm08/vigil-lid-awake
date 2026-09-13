@@ -1,0 +1,6 @@
+build/
+*.iconset
+__pycache__/
+*.pyc
+.DS_Store
+.swiftpm/
