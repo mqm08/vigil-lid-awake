@@ -131,11 +131,16 @@ def lid_closed():
 
 
 def external_display_connected():
-    # More than one "Resolution:" line means an external display is active
-    # alongside the built-in one. displaysleepnow would blank it too, so we
-    # must not fire it in that case.
+    # Count displays, then subtract the built-in panel. We can't just check
+    # "more than one display" because macOS drops the built-in panel from
+    # this list the moment the lid actually closes — at exactly the point
+    # we need to tell whether an external one is still there. Identifying
+    # the internal panel explicitly (by its "Connection Type: Internal"
+    # line) keeps working whether or not it's still listed.
     out = run("system_profiler", "SPDisplaysDataType")
-    return out.count("Resolution:") > 1
+    total = out.count("Resolution:")
+    internal = out.count("Connection Type: Internal")
+    return (total - internal) >= 1
 
 
 def agents_busy(names):
