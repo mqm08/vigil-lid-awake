@@ -548,7 +548,7 @@ struct AutomationCard: View {
             VStack(spacing: 0) {
                 Row(symbol: "laptopcomputer", tint: .indigo,
                     title: "合盖后熄灭屏幕",
-                    subtitle: "省电,也避免屏幕在盖子里发热") {
+                    subtitle: "接外接显示器时不建议开,可能触发系统锁屏") {
                     Toggle("", isOn: $store.config.displayOffOnLidClose)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }

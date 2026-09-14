@@ -49,7 +49,7 @@ DEFAULTS = {
     "pause_when_hot": True,
     "battery_temp_limit": 45,
     "chip_temp_limit": 100,
-    "display_off_on_lid_close": True,
+    "display_off_on_lid_close": False,
 }
 
 STATE_DEFAULTS = {

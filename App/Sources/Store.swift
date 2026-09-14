@@ -32,7 +32,7 @@ struct VigilConfig: Codable, Equatable {
     var pauseWhenHot = true
     var batteryTempLimit = 45
     var chipTempLimit = 100
-    var displayOffOnLidClose = true
+    var displayOffOnLidClose = false
     var notify = true
 
     enum CodingKeys: String, CodingKey {
