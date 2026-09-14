@@ -45,6 +45,7 @@ DEFAULTS = {
     "threshold": 20,
     "only_while_charging": False,
     "auto_enable_on_charge": False,
+    "auto_suppressed": False,   # user turned it off while auto-on-charge had it on
     "pause_when_hot": True,
     "battery_temp_limit": 45,
     "chip_temp_limit": 100,
@@ -187,7 +188,10 @@ def decide(cfg, state, now):
 
     pct, charging = battery()
 
-    enabled = cfg["enabled"] or (cfg["auto_enable_on_charge"] and charging)
+    # Auto-on-charge must never silently override an explicit "off": if the
+    # user switched it off while charging, stay off until power is unplugged.
+    auto_on = cfg["auto_enable_on_charge"] and charging and not cfg.get("auto_suppressed")
+    enabled = cfg["enabled"] or auto_on
     if not enabled:
         state["hot"] = False
         return False, "off"

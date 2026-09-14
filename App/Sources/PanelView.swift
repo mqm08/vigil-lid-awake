@@ -235,7 +235,7 @@ struct HeroCard: View {
             Spacer(minLength: 0)
 
             if store.daemonInstalled {
-                Toggle("", isOn: Binding(get: { store.config.enabled },
+                Toggle("", isOn: Binding(get: { store.config.enabled || store.onBecauseCharging },
                                          set: { store.setEnabled($0) }))
                     .toggleStyle(.switch)
                     .tint(Theme.emberDeep)

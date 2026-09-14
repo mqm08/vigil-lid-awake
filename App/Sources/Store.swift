@@ -28,6 +28,7 @@ struct VigilConfig: Codable, Equatable {
     var threshold = 20
     var onlyWhileCharging = false
     var autoEnableOnCharge = false
+    var autoSuppressed = false
     var pauseWhenHot = true
     var batteryTempLimit = 45
     var chipTempLimit = 100
@@ -43,6 +44,7 @@ struct VigilConfig: Codable, Equatable {
         case idleGraceMinutes = "idle_grace_minutes"
         case onlyWhileCharging = "only_while_charging"
         case autoEnableOnCharge = "auto_enable_on_charge"
+        case autoSuppressed = "auto_suppressed"
         case pauseWhenHot = "pause_when_hot"
         case batteryTempLimit = "battery_temp_limit"
         case chipTempLimit = "chip_temp_limit"
@@ -66,6 +68,7 @@ struct VigilConfig: Codable, Equatable {
         threshold = v(.threshold, d.threshold)
         onlyWhileCharging = v(.onlyWhileCharging, d.onlyWhileCharging)
         autoEnableOnCharge = v(.autoEnableOnCharge, d.autoEnableOnCharge)
+        autoSuppressed = v(.autoSuppressed, d.autoSuppressed)
         pauseWhenHot = v(.pauseWhenHot, d.pauseWhenHot)
         batteryTempLimit = v(.batteryTempLimit, d.batteryTempLimit)
         chipTempLimit = v(.chipTempLimit, d.chipTempLimit)
@@ -186,11 +189,16 @@ final class Store: ObservableObject {
         daemonInstalled && now.timeIntervalSince1970 - daemon.checkedAt < 90
     }
 
+    /// True when keep-awake is on only because the Mac is plugged in.
+    var onBecauseCharging: Bool {
+        !config.enabled && config.autoEnableOnCharge && battery.isCharging && !config.autoSuppressed
+    }
+
     /// Secondary line under the hero title while active.
     var activeDetail: String {
         switch config.keepMode {
         case .always:
-            return "合盖不会休眠"
+            return onBecauseCharging ? "接通电源自动开启" : "合盖不会休眠"
         case .timer:
             guard let exp = config.expiresAt else { return "合盖不会休眠" }
             let left = max(0, Int(exp - now.timeIntervalSince1970))
@@ -209,6 +217,9 @@ final class Store: ObservableObject {
     func setEnabled(_ on: Bool) {
         var c = config
         c.enabled = on
+        // An explicit switch-off has to stick even while auto-on-charge would
+        // turn it straight back on; it re-arms the next time power is plugged in.
+        c.autoSuppressed = !on && c.autoEnableOnCharge && battery.isCharging
         c.expiresAt = (on && c.keepMode == .timer) ? Date().timeIntervalSince1970 + Double(c.timerMinutes * 60) : nil
         config = c
         if on { requestNotificationPermission() }
@@ -311,7 +322,11 @@ final class Store: ObservableObject {
 
     func refresh() {
         now = Date()
+        let wasCharging = battery.isCharging
         battery = SystemProbe.battery()
+        if wasCharging, !battery.isCharging, config.autoSuppressed {
+            config.autoSuppressed = false   // unplugged: auto-on-charge re-arms
+        }
         sensors = Sensors.read()
         thermal = SystemProbe.thermalState
         lidClosed = SystemProbe.lidClosed()
