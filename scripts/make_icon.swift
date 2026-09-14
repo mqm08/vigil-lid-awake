@@ -45,62 +45,76 @@ ctx.drawRadialGradient(bloom, startCenter: CGPoint(x: 540, y: 600), startRadius:
 
 // Stars
 let stars: [(CGFloat, CGFloat, CGFloat, CGFloat)] = [
-    (240, 800, 7, 0.9), (330, 700, 4, 0.6), (760, 820, 5, 0.8), (820, 690, 3.5, 0.55),
-    (200, 620, 3, 0.45), (690, 760, 3, 0.5), (420, 830, 3.5, 0.6), (860, 560, 3, 0.4)
+    (200, 800, 6, 0.7), (280, 700, 3.5, 0.5), (800, 800, 5, 0.65), (850, 680, 3, 0.45),
+    (180, 610, 3, 0.4), (860, 570, 3, 0.35)
 ]
 for (x, y, r, a) in stars {
     ctx.setFillColor(rgb(1, 0.97, 0.9, a))
     ctx.fillEllipse(in: CGRect(x: x - r, y: y - r, width: r * 2, height: r * 2))
 }
 
-// ---- Crescent moon (amber), with glow
-let moonC = CGPoint(x: 530, y: 610), moonR: CGFloat = 170
+// ---- Hero: the closed lid, front-on, with a glowing notch — the same
+// motif as the menu bar glyph (MenuBarGlyph.swift), just much larger and
+// more dimensional. One bold shape, matching CleanMyMac / CARROT's style
+// of a single illustrative focal object rather than a busy scene.
+let lidW: CGFloat = 620, lidH: CGFloat = 372
+let lidRect = CGRect(x: 512 - lidW / 2, y: 330, width: lidW, height: lidH)
+let lidRadius: CGFloat = 72
+let lidPath = CGPath(roundedRect: lidRect, cornerWidth: lidRadius, cornerHeight: lidRadius, transform: nil)
+
+// Glow halo behind the lid
 ctx.saveGState()
-ctx.setShadow(offset: .zero, blur: 70, color: rgb(1.0, 0.62, 0.22, 0.85))
-ctx.beginTransparencyLayer(auxiliaryInfo: nil)
-ctx.saveGState()
-ctx.addEllipse(in: CGRect(x: moonC.x - moonR, y: moonC.y - moonR, width: moonR * 2, height: moonR * 2))
-ctx.clip()
-let moonGrad = CGGradient(colorsSpace: space, colors: [
-    rgb(1.0, 0.86, 0.52), rgb(1.0, 0.64, 0.24), rgb(0.95, 0.44, 0.15)
-] as CFArray, locations: [0, 0.55, 1])!
-ctx.drawLinearGradient(moonGrad, start: CGPoint(x: moonC.x - moonR, y: moonC.y + moonR),
-                       end: CGPoint(x: moonC.x + moonR, y: moonC.y - moonR), options: [])
-ctx.restoreGState()
-ctx.setBlendMode(.clear)
-let bite = CGPoint(x: moonC.x + 92, y: moonC.y + 62), biteR: CGFloat = 150
-ctx.fillEllipse(in: CGRect(x: bite.x - biteR, y: bite.y - biteR, width: biteR * 2, height: biteR * 2))
-ctx.endTransparencyLayer()
+let halo = CGGradient(colorsSpace: space, colors: [
+    rgb(1.0, 0.62, 0.22, 0.55), rgb(1.0, 0.55, 0.18, 0.0)
+] as CFArray, locations: [0, 1])!
+ctx.drawRadialGradient(halo, startCenter: CGPoint(x: lidRect.midX, y: lidRect.midY), startRadius: 0,
+                       endCenter: CGPoint(x: lidRect.midX, y: lidRect.midY), endRadius: 420, options: [])
 ctx.restoreGState()
 
-// ---- Closed laptop, seen slightly from the front
-let lidRect = CGRect(x: 232, y: 262, width: 560, height: 62)
-let lidPath = CGPath(roundedRect: lidRect, cornerWidth: 26, cornerHeight: 26, transform: nil)
+// Cast shadow under the lid
 ctx.saveGState()
-ctx.setShadow(offset: CGSize(width: 0, height: -10), blur: 30, color: rgb(0, 0, 0, 0.5))
-ctx.addPath(lidPath); ctx.setFillColor(rgb(0.7, 0.72, 0.78)); ctx.fillPath()
+ctx.setShadow(offset: CGSize(width: 0, height: -16), blur: 46, color: rgb(0, 0, 0, 0.45))
+ctx.addPath(lidPath); ctx.setFillColor(rgb(0.6, 0.3, 0.05)); ctx.fillPath()
 ctx.restoreGState()
+
+// Amber gradient body, top-lit
 ctx.saveGState()
 ctx.addPath(lidPath); ctx.clip()
-let metal = CGGradient(colorsSpace: space, colors: [
-    rgb(0.93, 0.94, 0.97), rgb(0.72, 0.74, 0.80), rgb(0.55, 0.57, 0.64)
-] as CFArray, locations: [0, 0.5, 1])!
-ctx.drawLinearGradient(metal, start: CGPoint(x: 512, y: lidRect.maxY), end: CGPoint(x: 512, y: lidRect.minY), options: [])
+let lidGrad = CGGradient(colorsSpace: space, colors: [
+    rgb(1.0, 0.86, 0.55), rgb(1.0, 0.66, 0.24), rgb(0.93, 0.42, 0.12)
+] as CFArray, locations: [0, 0.45, 1])!
+ctx.drawLinearGradient(lidGrad, start: CGPoint(x: 512, y: lidRect.maxY), end: CGPoint(x: 512, y: lidRect.minY), options: [])
 ctx.restoreGState()
-// seam between lid and base
-ctx.setFillColor(rgb(0.30, 0.31, 0.38, 0.9))
-ctx.fill(CGRect(x: lidRect.minX + 20, y: lidRect.minY + 22, width: lidRect.width - 40, height: 3))
-// front notch
-ctx.setFillColor(rgb(0.42, 0.43, 0.50, 0.8))
-let notch = CGPath(roundedRect: CGRect(x: 462, y: lidRect.minY + 4, width: 100, height: 10),
-                   cornerWidth: 5, cornerHeight: 5, transform: nil)
+
+// Notch: flat top, rounded bottom corners — cut into the top edge, tinted
+// like a pane onto the night sky behind it.
+let notchW: CGFloat = 188, notchH: CGFloat = 64, notchRad: CGFloat = 30
+let notchRect = CGRect(x: 512 - notchW / 2, y: lidRect.maxY - notchH, width: notchW, height: notchH)
+let notch = CGMutablePath()
+notch.move(to: CGPoint(x: notchRect.minX, y: notchRect.maxY))
+notch.addLine(to: CGPoint(x: notchRect.minX, y: notchRect.minY + notchRad))
+notch.addArc(tangent1End: CGPoint(x: notchRect.minX, y: notchRect.minY),
+            tangent2End: CGPoint(x: notchRect.minX + notchRad, y: notchRect.minY), radius: notchRad)
+notch.addLine(to: CGPoint(x: notchRect.maxX - notchRad, y: notchRect.minY))
+notch.addArc(tangent1End: CGPoint(x: notchRect.maxX, y: notchRect.minY),
+            tangent2End: CGPoint(x: notchRect.maxX, y: notchRect.minY + notchRad), radius: notchRad)
+notch.addLine(to: CGPoint(x: notchRect.maxX, y: notchRect.maxY))
+notch.closeSubpath()
+ctx.setFillColor(rgb(0.98, 0.97, 0.94))
 ctx.addPath(notch); ctx.fillPath()
 
-// "still awake" LED
+// Thin dark foot beneath the lid — the closed base, viewed edge-on.
+let footRect = CGRect(x: lidRect.minX - 18, y: 296, width: lidRect.width + 36, height: 30)
+ctx.setFillColor(rgb(0.10, 0.09, 0.14, 0.85))
+ctx.addPath(CGPath(roundedRect: footRect, cornerWidth: 15, cornerHeight: 15, transform: nil))
+ctx.fillPath()
+
+// Top highlight arc on the lid, like glass catching light.
 ctx.saveGState()
-ctx.setShadow(offset: .zero, blur: 22, color: rgb(1.0, 0.7, 0.3, 1))
-ctx.setFillColor(rgb(1.0, 0.8, 0.45))
-ctx.fillEllipse(in: CGRect(x: 505, y: lidRect.minY + 34, width: 14, height: 14))
+ctx.addPath(lidPath); ctx.clip()
+let sheen = CGGradient(colorsSpace: space, colors: [rgb(1, 1, 1, 0.35), rgb(1, 1, 1, 0)] as CFArray,
+                       locations: [0, 1])!
+ctx.drawLinearGradient(sheen, start: CGPoint(x: 512, y: lidRect.maxY), end: CGPoint(x: 512, y: lidRect.maxY - 90), options: [])
 ctx.restoreGState()
 
 // Subtle top highlight on the squircle
