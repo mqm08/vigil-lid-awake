@@ -32,6 +32,8 @@ LOG_PATH = "/var/log/vigil.log"
 STATE_PATH = "/var/run/vigil.state.json"
 HEAT_HYSTERESIS = 3.0     # °C cooler than the limit before resuming
 HEAT_STRIKES = 2          # consecutive hot checks (~1 min) before pausing
+APP_GRACE_SECONDS = 120   # how long the menu bar app may be absent before
+                          # we assume it crashed/was force-quit and give up
 BUSY_CPU = 3.0            # % CPU across an agent's process tree that counts as working
 
 DEFAULTS = {
@@ -52,6 +54,7 @@ DEFAULTS = {
 STATE_DEFAULTS = {
     "hot": False,
     "heat_strikes": 0,
+    "app_last_seen": 0,
     "last_set": None,
     "overrides": [],
     "last_busy_at": 0,
@@ -72,6 +75,10 @@ def run(*cmd):
         return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
     except (OSError, subprocess.SubprocessError):
         return ""
+
+
+def app_running():
+    return bool(run("pgrep", "-x", "Vigil").strip())
 
 
 def console_user():
@@ -123,6 +130,14 @@ def lid_closed():
     return '"AppleClamshellState" = Yes' in run("ioreg", "-r", "-k", "AppleClamshellState", "-d", "1")
 
 
+def external_display_connected():
+    # More than one "Resolution:" line means an external display is active
+    # alongside the built-in one. displaysleepnow would blank it too, so we
+    # must not fire it in that case.
+    out = run("system_profiler", "SPDisplaysDataType")
+    return out.count("Resolution:") > 1
+
+
 def agents_busy(names):
     """
     True if any watched agent (e.g. `claude`, `codex`) or anything it spawned
@@ -158,6 +173,13 @@ def agents_busy(names):
 
 def decide(cfg, state, now):
     """Return (want_awake, reason). Updates `state` in place."""
+    if app_running():
+        state["app_last_seen"] = now
+    elif now - state.get("app_last_seen", 0) > APP_GRACE_SECONDS:
+        # The app is gone and has been for a while — crashed or force-quit.
+        # Don't strand the Mac awake with no UI able to turn it off.
+        return False, "app not running"
+
     pct, charging = battery()
 
     enabled = cfg["enabled"] or (cfg["auto_enable_on_charge"] and charging)
@@ -211,9 +233,14 @@ def handle_lid(cfg, state, awake):
     closed = lid_closed()
     if closed and not state.get("lid_closed") and awake and cfg["display_off_on_lid_close"]:
         # With SleepDisabled the panel can stay lit behind a closed lid,
-        # wasting power and trapping heat.
-        run("pmset", "displaysleepnow")
-        log("lid closed -> display off")
+        # wasting power and trapping heat. But `pmset displaysleepnow` puts
+        # EVERY display to sleep — skip it when an external one is in use,
+        # or we would blank that too.
+        if external_display_connected():
+            log("lid closed, external display present -> skip display sleep")
+        else:
+            run("pmset", "displaysleepnow")
+            log("lid closed -> display off")
     state["lid_closed"] = closed
 
 

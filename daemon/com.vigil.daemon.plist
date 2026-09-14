@@ -8,7 +8,7 @@
         <string>/usr/bin/python3</string>
         <string>/usr/local/libexec/vigil/vigild.py</string>
     </array>
-    <key>StartInterval</key>     <integer>30</integer>
+    <key>StartInterval</key>     <integer>5</integer>
     <key>RunAtLoad</key>         <true/>
     <key>StandardErrorPath</key> <string>/var/log/vigil.log</string>
 </dict>
