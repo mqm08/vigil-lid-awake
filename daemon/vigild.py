@@ -64,6 +64,7 @@ STATE_DEFAULTS = {
     "lid_closed": False,
     "offline_since": 0,
     "last_hotspot_try": 0,
+    "user_enabled": None,
 }
 
 
@@ -299,13 +300,28 @@ def handle_network(cfg, state, awake, now):
         return
     if now - state.get("last_hotspot_try", 0) < HOTSPOT_RETRY:
         return
+    join_hotspot(ssid, state, now, "offline {}s".format(int(now - state["offline_since"])))
+
+
+def join_hotspot(ssid, state, now, why):
     state["last_hotspot_try"] = now
     dev = wifi_device()
     run("networksetup", "-setairportpower", dev, "on")
     # Password comes from the System keychain, where macOS keeps saved Wi-Fi.
     out = run("networksetup", "-setairportnetwork", dev, ssid).strip()
-    log("offline {}s -> joining hotspot '{}' {}".format(
-        int(now - state["offline_since"]), ssid, "failed: " + out if out else "ok"))
+    log("{} -> joining hotspot '{}' {}".format(why, ssid, "failed: " + out if out else "ok"))
+
+
+def handle_switch_on(cfg, state, now):
+    """The moment the user flips the main switch on, move to the hotspot so
+    walking away from the office Wi-Fi never drops the connection. Only the
+    explicit switch counts, not auto-on-charge (that would burn phone data
+    just from plugging in at the desk)."""
+    was = state.get("user_enabled")
+    state["user_enabled"] = bool(cfg["enabled"])
+    ssid = (cfg.get("hotspot_ssid") or "").strip()
+    if was is False and cfg["enabled"] and cfg.get("auto_hotspot") and ssid:
+        join_hotspot(ssid, state, now, "switched on")
 
 
 def main():
@@ -338,6 +354,7 @@ def main():
         log("SleepDisabled {} -> {}  ({})".format(int(current), int(want), reason))
 
     handle_lid(cfg, state, want)
+    handle_switch_on(cfg, state, now)
     handle_network(cfg, state, want, now)
     state.update(last_set=want, reason=reason, checked_at=int(now))
     save_state(state)

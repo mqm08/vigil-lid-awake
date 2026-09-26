@@ -557,8 +557,8 @@ struct AutomationCard: View {
                 }
                 Divider().padding(.leading, 36).padding(.vertical, 6)
                 Row(symbol: "personalhotspot", tint: .green,
-                    title: "断网自动连手机热点",
-                    subtitle: "守夜中断网 15 秒后自动连,热点需先在这台 Mac 上连过一次") {
+                    title: "守夜时用手机热点",
+                    subtitle: "打开守夜立即切到热点,断网也会自动重连。热点需先在这台 Mac 上连过一次") {
                     Toggle("", isOn: $store.config.autoHotspot)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }

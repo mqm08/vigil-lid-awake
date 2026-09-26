@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP="build/Vigil.app"
-VERSION="${VERSION:-1.4.0}"
+VERSION="${VERSION:-1.4.1}"
 
 echo "› Compiling…"
 mkdir -p build
