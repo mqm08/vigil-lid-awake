@@ -50,6 +50,8 @@ DEFAULTS = {
     "battery_temp_limit": 45,
     "chip_temp_limit": 100,
     "display_off_on_lid_close": False,
+    "auto_hotspot": False,
+    "hotspot_ssid": "",
 }
 
 STATE_DEFAULTS = {
@@ -60,6 +62,8 @@ STATE_DEFAULTS = {
     "overrides": [],
     "last_busy_at": 0,
     "lid_closed": False,
+    "offline_since": 0,
+    "last_hotspot_try": 0,
 }
 
 
@@ -253,6 +257,57 @@ def handle_lid(cfg, state, awake):
     state["lid_closed"] = closed
 
 
+OFFLINE_GRACE = 15       # seconds offline before reaching for the hotspot
+HOTSPOT_RETRY = 60       # seconds between join attempts
+
+
+def online():
+    """True if a physical interface (Wi-Fi / Ethernet) has an IPv4 address.
+
+    The default route can't be trusted: with a VPN or proxy app running it
+    points at a utun tunnel and exists even when the real link is down.
+    """
+    for iface in run("ifconfig", "-l").split():
+        if iface.startswith(("en", "bridge")) and run("ipconfig", "getifaddr", iface).strip():
+            return True
+    return False
+
+
+def wifi_device():
+    out = run("networksetup", "-listallhardwareports")
+    lines = out.splitlines()
+    for i, line in enumerate(lines):
+        if "Wi-Fi" in line and i + 1 < len(lines) and "Device:" in lines[i + 1]:
+            return lines[i + 1].split(":", 1)[1].strip()
+    return "en0"
+
+
+def handle_network(cfg, state, awake, now):
+    """While keeping the Mac awake, fall back to the phone hotspot if the
+    network drops (e.g. leaving the office Wi-Fi with the lid closed)."""
+    ssid = (cfg.get("hotspot_ssid") or "").strip()
+    if not (awake and cfg.get("auto_hotspot") and ssid):
+        state["offline_since"] = 0
+        return
+    if online():
+        state["offline_since"] = 0
+        return
+    if not state.get("offline_since"):
+        state["offline_since"] = now
+        return
+    if now - state["offline_since"] < OFFLINE_GRACE:
+        return
+    if now - state.get("last_hotspot_try", 0) < HOTSPOT_RETRY:
+        return
+    state["last_hotspot_try"] = now
+    dev = wifi_device()
+    run("networksetup", "-setairportpower", dev, "on")
+    # Password comes from the System keychain, where macOS keeps saved Wi-Fi.
+    out = run("networksetup", "-setairportnetwork", dev, ssid).strip()
+    log("offline {}s -> joining hotspot '{}' {}".format(
+        int(now - state["offline_since"]), ssid, "failed: " + out if out else "ok"))
+
+
 def main():
     now = time.time()
     state = load_json(STATE_PATH, STATE_DEFAULTS)
@@ -283,6 +338,7 @@ def main():
         log("SleepDisabled {} -> {}  ({})".format(int(current), int(want), reason))
 
     handle_lid(cfg, state, want)
+    handle_network(cfg, state, want, now)
     state.update(last_set=want, reason=reason, checked_at=int(now))
     save_state(state)
 

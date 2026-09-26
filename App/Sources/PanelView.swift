@@ -97,8 +97,6 @@ struct PanelView: View {
                 }
                 Divider()
                 Button("卸载守夜…", role: .destructive) { confirmUninstall() }
-                Divider()
-                Button("退出") { store.quit() }
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 13))
@@ -107,6 +105,11 @@ struct PanelView: View {
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
+            Button("退出") { store.quit() }
+                .buttonStyle(.borderless)
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(.secondary)
+                .keyboardShortcut("q")
         }
         .padding(.horizontal, 4)
         .padding(.top, 2)
@@ -551,6 +554,23 @@ struct AutomationCard: View {
                     subtitle: "接外接显示器时不建议开,可能触发系统锁屏") {
                     Toggle("", isOn: $store.config.displayOffOnLidClose)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
+                }
+                Divider().padding(.leading, 36).padding(.vertical, 6)
+                Row(symbol: "personalhotspot", tint: .green,
+                    title: "断网自动连手机热点",
+                    subtitle: "守夜中断网 15 秒后自动连,热点需先在这台 Mac 上连过一次") {
+                    Toggle("", isOn: $store.config.autoHotspot)
+                        .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
+                }
+                if store.config.autoHotspot {
+                    HStack {
+                        Text("热点名称").font(.system(size: 11)).foregroundStyle(.secondary)
+                        TextField("例如 iPhone air", text: $store.config.hotspotSSID)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11))
+                    }
+                    .padding(.leading, 36)
+                    .padding(.top, 4)
                 }
                 Divider().padding(.leading, 36).padding(.vertical, 6)
                 Row(symbol: "bolt.fill", tint: .yellow,

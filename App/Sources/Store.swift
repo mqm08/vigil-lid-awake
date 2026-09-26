@@ -33,6 +33,8 @@ struct VigilConfig: Codable, Equatable {
     var batteryTempLimit = 45
     var chipTempLimit = 100
     var displayOffOnLidClose = false
+    var autoHotspot = false
+    var hotspotSSID = ""
     var notify = true
 
     enum CodingKeys: String, CodingKey {
@@ -49,6 +51,8 @@ struct VigilConfig: Codable, Equatable {
         case batteryTempLimit = "battery_temp_limit"
         case chipTempLimit = "chip_temp_limit"
         case displayOffOnLidClose = "display_off_on_lid_close"
+        case autoHotspot = "auto_hotspot"
+        case hotspotSSID = "hotspot_ssid"
     }
 
     init() {}
@@ -73,6 +77,8 @@ struct VigilConfig: Codable, Equatable {
         batteryTempLimit = v(.batteryTempLimit, d.batteryTempLimit)
         chipTempLimit = v(.chipTempLimit, d.chipTempLimit)
         displayOffOnLidClose = v(.displayOffOnLidClose, d.displayOffOnLidClose)
+        autoHotspot = v(.autoHotspot, d.autoHotspot)
+        hotspotSSID = v(.hotspotSSID, d.hotspotSSID)
         notify = v(.notify, d.notify)
     }
 }
@@ -133,6 +139,12 @@ final class Store: ObservableObject {
         load()
         refresh()
         lastStatusKey = statusKey
+        // Without this, a reboot silently ends keep-awake: the app isn't
+        // running, and the daemon's watchdog restores sleep two minutes later.
+        if !UserDefaults.standard.bool(forKey: "didEnableLoginItem") {
+            UserDefaults.standard.set(true, forKey: "didEnableLoginItem")
+            setLaunchAtLogin(true)
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.tick() }
         }
