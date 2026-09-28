@@ -90,9 +90,11 @@ struct DaemonState: Decodable {
     var checkedAt: Double = 0
     var overrides: [Double] = []
     var lastBusyAt: Double = 0
+    var hotspotStatus = ""
 
     enum CodingKeys: String, CodingKey {
         case hot, reason, overrides
+        case hotspotStatus = "hotspot_status"
         case checkedAt = "checked_at"
         case lastBusyAt = "last_busy_at"
     }
@@ -106,6 +108,7 @@ struct DaemonState: Decodable {
         checkedAt = (try? c.decodeIfPresent(Double.self, forKey: .checkedAt)) ?? 0
         overrides = (try? c.decodeIfPresent([Double].self, forKey: .overrides)) ?? []
         lastBusyAt = (try? c.decodeIfPresent(Double.self, forKey: .lastBusyAt)) ?? 0
+        hotspotStatus = (try? c.decodeIfPresent(String.self, forKey: .hotspotStatus)) ?? ""
     }
 }
 
@@ -394,10 +397,12 @@ final class Store: ObservableObject {
 
     private static func installedDaemonDiffers() -> Bool {
         guard let bundled = Bundle.main.resourceURL?.appendingPathComponent("daemon") else { return false }
-        for file in ["vigild.py", "thermal.py", "vigil-sensors"] {
+        let pairs = ["vigild.py", "thermal.py", "vigil-sensors", "vigild"].map {
+            ($0, "\(installedDaemonDir)/\($0)")
+        } + [("com.vigil.daemon.plist", daemonPlist)]
+        for (file, installed) in pairs {
             guard let a = try? Data(contentsOf: bundled.appendingPathComponent(file)) else { continue }
-            let b = try? Data(contentsOf: URL(fileURLWithPath: "\(installedDaemonDir)/\(file)"))
-            if a != b { return true }
+            if a != (try? Data(contentsOf: URL(fileURLWithPath: installed))) { return true }
         }
         return false
     }

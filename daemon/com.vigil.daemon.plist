@@ -5,8 +5,11 @@
     <key>Label</key>             <string>com.vigil.daemon</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/usr/bin/python3</string>
-        <string>/usr/local/libexec/vigil/vigild.py</string>
+        <string>/usr/local/libexec/vigil/vigild</string>
+    </array>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>app.vigil.Vigil</string>
     </array>
     <key>StartInterval</key>     <integer>5</integer>
     <key>RunAtLoad</key>         <true/>

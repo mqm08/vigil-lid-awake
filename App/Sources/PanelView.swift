@@ -20,8 +20,10 @@ struct PanelView: View {
             HeroCard()
             if store.hasConflict { ConflictBanner() }
             if store.daemonOutdated { UpdateBanner() }
+            else if store.daemonInstalled && !store.daemonHealthy { DaemonOffBanner() }
             MetricsRow()
             KeepModeCard()
+            QuickCard()
             settingsToggle
             if showSettings {
                 FitScrollView(maxHeight: maxSettingsHeight) {
@@ -46,7 +48,7 @@ struct PanelView: View {
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "slider.horizontal.3")
-                Text(showSettings ? "收起设置" : "安全保护与更多设置")
+                Text(showSettings ? "收起设置" : "高级设置")
                 Spacer()
                 Image(systemName: "chevron.down")
                     .rotationEffect(.degrees(showSettings ? 180 : 0))
@@ -153,6 +155,29 @@ struct FitScrollView<Content: View>: View {
 private struct HeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
+}
+
+/// The background item was switched off in System Settings (it used to show
+/// up there as an anonymous "python3", which people understandably disable).
+struct DaemonOffBanner: View {
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.octagon.fill").foregroundStyle(.red)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("后台服务没有在运行").font(.system(size: 12, weight: .semibold))
+                Text("守夜现在不会生效。请在「登录项与扩展 → 允许在后台」里把守夜(或 vigild / python3)打开。")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("打开设置") {
+                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                }
+                .buttonStyle(.borderedProminent).tint(.red).controlSize(.small)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.red.opacity(0.10)))
+    }
 }
 
 struct UpdateBanner: View {
@@ -542,44 +567,67 @@ struct LimitRow: View {
 
 // MARK: - Automation
 
-struct AutomationCard: View {
+struct QuickCard: View {
     @EnvironmentObject var store: Store
 
     var body: some View {
         VStack(spacing: 6) {
-            SectionLabel(text: "更多")
+            SectionLabel(text: "常用")
             VStack(spacing: 0) {
-                Row(symbol: "laptopcomputer", tint: .indigo,
-                    title: "合盖后熄灭屏幕",
-                    subtitle: "接外接显示器时不建议开,可能触发系统锁屏") {
-                    Toggle("", isOn: $store.config.displayOffOnLidClose)
-                        .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
-                }
-                Divider().padding(.leading, 36).padding(.vertical, 6)
                 Row(symbol: "personalhotspot", tint: .green,
                     title: "守夜时用手机热点",
-                    subtitle: "打开守夜立即切到热点,断网也会自动重连。热点需先在这台 Mac 上连过一次") {
+                    subtitle: store.config.autoHotspot ? hotspotLine : "离开公司 Wi-Fi 也不断网") {
                     Toggle("", isOn: $store.config.autoHotspot)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }
                 if store.config.autoHotspot {
-                    HStack {
+                    HStack(spacing: 8) {
                         Text("热点名称").font(.system(size: 11)).foregroundStyle(.secondary)
                         TextField("例如 iPhone air", text: $store.config.hotspotSSID)
                             .textFieldStyle(.roundedBorder)
                             .font(.system(size: 11))
                     }
                     .padding(.leading, 36)
-                    .padding(.top, 4)
+                    .padding(.top, 6)
+                    if store.daemon.hotspotStatus == "not_found" {
+                        Label("没搜到这个热点。iPhone 热点平时不广播,建议在「系统设置 → Wi-Fi → 询问是否加入热点」选「自动」,由系统自动唤醒。",
+                              systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.orange)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .padding(.leading, 36)
+                            .padding(.top, 6)
+                    }
                 }
                 Divider().padding(.leading, 36).padding(.vertical, 6)
                 Row(symbol: "bolt.fill", tint: .yellow,
-                    title: "接通电源时自动开启",
+                    title: "插电自动开启",
                     subtitle: "插上电就守夜,拔掉就恢复") {
                     Toggle("", isOn: $store.config.autoEnableOnCharge)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }
-                Divider().padding(.leading, 36).padding(.vertical, 6)
+            }
+            .card()
+        }
+    }
+
+    private var hotspotLine: String {
+        switch store.daemon.hotspotStatus {
+        case "ok": return "已连上手机热点"
+        case "not_found": return "没搜到热点,见下方提示"
+        case "error": return "连接失败,稍后自动重试"
+        default: return "打开守夜时切到热点,断网自动重连"
+        }
+    }
+}
+
+struct AutomationCard: View {
+    @EnvironmentObject var store: Store
+
+    var body: some View {
+        VStack(spacing: 6) {
+            SectionLabel(text: "其他")
+            VStack(spacing: 0) {
                 Row(symbol: "bell.badge.fill", tint: .red,
                     title: "暂停和完成时通知我",
                     subtitle: nil) {
@@ -592,6 +640,13 @@ struct AutomationCard: View {
                     subtitle: nil) {
                     Toggle("", isOn: Binding(get: { store.launchAtLogin },
                                              set: { store.setLaunchAtLogin($0) }))
+                        .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
+                }
+                Divider().padding(.leading, 36).padding(.vertical, 6)
+                Row(symbol: "laptopcomputer", tint: .indigo,
+                    title: "合盖后熄灭屏幕",
+                    subtitle: "接外接显示器时不建议开,可能触发系统锁屏") {
+                    Toggle("", isOn: $store.config.displayOffOnLidClose)
                         .toggleStyle(.switch).controlSize(.mini).tint(Theme.emberDeep).labelsHidden()
                 }
             }

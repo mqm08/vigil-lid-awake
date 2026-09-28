@@ -65,6 +65,8 @@ STATE_DEFAULTS = {
     "offline_since": 0,
     "last_hotspot_try": 0,
     "user_enabled": None,
+    "hotspot_status": "",
+    "hotspot_at": 0,
 }
 
 
@@ -292,6 +294,8 @@ def handle_network(cfg, state, awake, now):
         return
     if online():
         state["offline_since"] = 0
+        if state.get("hotspot_status") in ("not_found", "error"):
+            state["hotspot_status"] = ""
         return
     if not state.get("offline_since"):
         state["offline_since"] = now
@@ -309,7 +313,11 @@ def join_hotspot(ssid, state, now, why):
     run("networksetup", "-setairportpower", dev, "on")
     # Password comes from the System keychain, where macOS keeps saved Wi-Fi.
     out = run("networksetup", "-setairportnetwork", dev, ssid).strip()
-    log("{} -> joining hotspot '{}' {}".format(why, ssid, "failed: " + out if out else "ok"))
+    status = "not_found" if "Could not find" in out else ("error" if out else "ok")
+    if status != state.get("hotspot_status") or status == "ok":
+        log("{} -> joining hotspot '{}' {}".format(why, ssid, "failed: " + out if out else "ok"))
+    state["hotspot_status"] = status
+    state["hotspot_at"] = int(now)
 
 
 def handle_switch_on(cfg, state, now):

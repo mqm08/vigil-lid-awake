@@ -9,7 +9,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 APP="build/Vigil.app"
-VERSION="${VERSION:-1.4.1}"
+VERSION="${VERSION:-1.4.2}"
 
 echo "› Compiling…"
 mkdir -p build
@@ -17,6 +17,7 @@ swiftc -parse-as-library -O -target arm64-apple-macosx14.0 \
        App/Sources/*.swift -o build/Vigil
 swiftc -O -target arm64-apple-macosx14.0 \
        App/Sources/Sensors.swift App/SensorsCLI/main.swift -o build/vigil-sensors
+clang -O2 -arch arm64 -mmacosx-version-min=14.0 daemon/launcher.c -o build/vigild
 
 echo "› Rendering icon…"
 swiftc scripts/make_icon.swift -o build/make_icon
@@ -35,7 +36,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources/daemon"
 cp build/Vigil "$APP/Contents/MacOS/Vigil"
 cp build/Vigil.icns "$APP/Contents/Resources/Vigil.icns"
-cp daemon/vigild.py daemon/thermal.py daemon/com.vigil.daemon.plist build/vigil-sensors "$APP/Contents/Resources/daemon/"
+cp daemon/vigild.py daemon/thermal.py daemon/com.vigil.daemon.plist build/vigil-sensors build/vigild "$APP/Contents/Resources/daemon/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
